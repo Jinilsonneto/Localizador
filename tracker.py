@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
+"""
+Localizador GPS para Termux - Versão Simplificada
+Salva automaticamente arquivos JSON quando detecta permanência > 10 minutos
+"""
 import os
 import sys
 import time
 import signal
 import math
 from datetime import datetime, timedelta
-from config import load_config, save_config, LOG_DIR
+from config import load_config, save_config, LOG_DIR, EXPORT_DIR
 from database import init_db, insert_point, insert_stay, get_last_point, get_all_points, get_all_stays, get_stats
 from gps import get_location, check_termux_api
-from export import export_csv, export_gpx
+from export import export_csv, export_gpx, save_stay_file, list_export_files
 
 PID_FILE = os.path.join(LOG_DIR, 'tracker.pid')
 
@@ -77,10 +81,15 @@ def start_tracker():
 
     def safe_exit(signum=None, frame=None):
         print("\nEncerrando com segurança. Salvando dados...")
+        # Salva permanência pendente se existir
         if potential_stay_start and potential_stay_start < datetime.now() - timedelta(minutes=cfg['stay_duration_minutes']):
-            insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'), 
-                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 
-                        (datetime.now() - potential_stay_start).total_seconds() / 60, stay_point_count)
+            dep_time = datetime.now()
+            duration = (dep_time - potential_stay_start).total_seconds() / 60
+            stay_id = insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'), 
+                        dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count)
+            # Salva arquivo da permanência
+            save_stay_file(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
+                          dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count, stay_id)
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
         sys.exit(0)
@@ -120,9 +129,12 @@ def start_tracker():
                         # Esteve parado o suficiente, salva a permanência
                         dep_time = datetime.now()
                         duration = (dep_time - potential_stay_start).total_seconds() / 60
-                        insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
+                        stay_id = insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
                                     dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count)
-                        print(f"Permanência registrada: {duration:.1f} min.")
+                        # Salva arquivo individual da permanência para fácil compartilhamento
+                        save_stay_file(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
+                                      dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count, stay_id)
+                        print(f"✅ Permanência registrada: {duration:.1f} min.")
                     
                     # Reseta a permanência
                     potential_stay_start = None
@@ -183,6 +195,40 @@ def show_stats():
     else:
         print("Dados insuficientes para calcular distância.")
 
+def list_files():
+    """Lista arquivos de localização exportados para fácil envio."""
+    print("\n=== 📁 ARQUIVOS PARA ENVIO ===")
+    files = list_export_files()
+    if files:
+        print(f"\nLocal: {EXPORT_DIR}")
+        print("\n🚀 Para enviar, use:")
+        latest = files[-1]['path']
+        print(f"  termux-share {latest}")
+        print("\nOu use o comando 'share' para enviar o último automaticamente:")
+        print(f"  python tracker.py share")
+    else:
+        print("\nNenhum arquivo exportado ainda.")
+        print("Os arquivos de permanência são criados automaticamente quando você fica +10min no mesmo local.")
+
+def share_file_cmd():
+    """Compartilha o último arquivo de permanência usando termux-share."""
+    from export import get_latest_stay_file
+    latest = get_latest_stay_file()
+    if latest:
+        print(f"\n📤 Compartilhando: {latest}")
+        print("Execute no Termux:")
+        print(f"  termux-share {latest}")
+        
+        # Tenta executar diretamente se estiver no Termux
+        try:
+            import subprocess
+            subprocess.run(['termux-share', latest], check=False)
+        except FileNotFoundError:
+            print("\n⚠️  termux-share não encontrado. Instale com: pkg install termux-api")
+    else:
+        print("\n❌ Nenhum arquivo de permanência encontrado.")
+        print("Fique mais de 10 minutos no mesmo local para gerar um arquivo.")
+
 def config_menu():
     cfg = load_config()
     print("\n--- CONFIGURAÇÕES ATUAIS ---")
@@ -211,7 +257,23 @@ def config_menu():
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python tracker.py [start|stop|status|history|stats|export|config]")
+        print("=" * 50)
+        print("📍 LOCALIZADOR GPS PARA TERMUX")
+        print("=" * 50)
+        print("\nUso: python tracker.py [comando]")
+        print("\n📌 Comandos principais:")
+        print("  start   - Inicia o rastreamento (roda em segundo plano)")
+        print("  stop    - Para o rastreamento")
+        print("  status  - Mostra última localização")
+        print("  files   - Lista arquivos para envio")
+        print("  share   - Envia último arquivo de permanência")
+        print("\n📊 Outros comandos:")
+        print("  history - Histórico de localizações")
+        print("  stats   - Estatísticas")
+        print("  export  - Exporta dados (csv ou gpx)")
+        print("  config  - Configura parâmetros")
+        print("\n💡 Dica: Os arquivos de permanência são salvos automaticamente")
+        print("   quando você fica +10 min no mesmo local.")
         sys.exit(1)
         
     cmd = sys.argv[1].lower()
@@ -226,6 +288,10 @@ def main():
         show_history()
     elif cmd == 'stats':
         show_stats()
+    elif cmd == 'files':
+        list_files()
+    elif cmd == 'share':
+        share_file_cmd()
     elif cmd == 'export':
         if len(sys.argv) > 2 and sys.argv[2] == 'gpx':
             export_gpx()
@@ -236,7 +302,7 @@ def main():
     elif cmd == 'config':
         config_menu()
     else:
-        print("Comando não reconhecido.")
+        print("Comando não reconhecido. Use 'python tracker.py' para ver ajuda.")
 
 if __name__ == '__main__':
     main()
