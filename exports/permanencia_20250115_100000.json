@@ -1,0 +1,15 @@
+{
+  "id": 1,
+  "tipo": "permanencia",
+  "localizacao": {
+    "latitude": -23.55052,
+    "longitude": -46.633308,
+    "google_maps": "https://www.google.com/maps?q=-23.55052,-46.633308",
+    "waze": "https://waze.com/ul?ll=-23.55052,-46.633308&navigate=yes"
+  },
+  "chegada": "2025-01-15 10:00:00",
+  "saida": "2025-01-15 10:15:00",
+  "duracao_minutos": 15.0,
+  "pontos_registrados": 2,
+  "exportado_em": "2026-08-14 21:35:38"
+}

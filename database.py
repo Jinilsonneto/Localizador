@@ -66,9 +66,12 @@ def insert_stay(lat, lon, arrival, departure, duration, count):
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (lat, lon, arrival, departure, duration, count))
         conn.commit()
+        stay_id = c.lastrowid
         conn.close()
+        return stay_id
     except sqlite3.Error as e:
         print(f"Erro ao salvar permanência: {e}")
+        return None
 
 def get_last_point():
     conn = get_db()
