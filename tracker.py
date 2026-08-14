@@ -9,7 +9,7 @@ import time
 import signal
 import math
 from datetime import datetime, timedelta
-from config import load_config, save_config, LOG_DIR, EXPORT_DIR
+from config import load_config, save_config, ensure_dirs, LOG_DIR, EXPORT_DIR
 from database import init_db, insert_point, insert_stay, get_last_point, get_all_points, get_all_stays, get_stats
 from gps import get_location, check_termux_api
 from export import export_csv, export_gpx, save_stay_file, list_export_files
@@ -256,6 +256,8 @@ def config_menu():
         print("Erro: Insira apenas números inteiros.")
 
 def main():
+    ensure_dirs()  # garante que logs/, data/ e exports/ existem antes de qualquer comando
+    init_db()       # garante que as tabelas existem antes de qualquer comando (CREATE TABLE IF NOT EXISTS é seguro repetir)
     if len(sys.argv) < 2:
         print("=" * 50)
         print("📍 LOCALIZADOR GPS PARA TERMUX")

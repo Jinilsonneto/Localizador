@@ -2,9 +2,16 @@ import subprocess
 import json
 import shutil
 import logging
+import os
+
+# Garante caminho absoluto (independente de onde o comando é executado)
+# e cria a pasta logs/ antes de configurar o logging, senão o script
+# quebra com FileNotFoundError logo na importação.
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(_LOG_DIR, exist_ok=True)
 
 logging.basicConfig(
-    filename='logs/tracker.log',
+    filename=os.path.join(_LOG_DIR, 'tracker.log'),
     level=logging.ERROR,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
