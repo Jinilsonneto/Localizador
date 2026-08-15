@@ -8,11 +8,13 @@ import sys
 import time
 import signal
 import math
+import subprocess
 from datetime import datetime, timedelta
 from config import load_config, save_config, ensure_dirs, LOG_DIR, EXPORT_DIR
 from database import init_db, insert_point, insert_stay, get_last_point, get_all_points, get_all_stays, get_stats
 from gps import get_location, check_termux_api
 from export import export_csv, export_gpx, save_stay_file, list_export_files
+import logging
 
 PID_FILE = os.path.join(LOG_DIR, 'tracker.pid')
 
@@ -62,6 +64,13 @@ def start_tracker():
         print("Erro: Termux:API não está instalado.")
         return
 
+    # Mantém a CPU acordada em segundo plano (evita que o Android mate o processo)
+    try:
+        subprocess.run(['termux-wake-lock'], check=False)
+        print("🔒 Wake lock ativado (processo protegido contra economia de bateria).")
+    except FileNotFoundError:
+        print("⚠️  termux-wake-lock não encontrado, wake lock não ativado.")
+
     init_db()
     cfg = load_config()
     
@@ -92,59 +101,68 @@ def start_tracker():
                           dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count, stay_id)
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
+        try:
+            subprocess.run(['termux-wake-unlock'], check=False)
+        except FileNotFoundError:
+            pass
         sys.exit(0)
 
     signal.signal(signal.SIGINT, safe_exit)
     signal.signal(signal.SIGTERM, safe_exit)
 
     while True:
-        loc = get_location()
-        
-        if loc:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Local: {loc['latitude']:.5f}, {loc['longitude']:.5f} (Acc: {loc['accuracy']:.0f}m)")
-            insert_point(loc['latitude'], loc['longitude'], loc['altitude'], loc['accuracy'], loc['speed'], loc['bearing'])
-            
-            # Lógica de Permanência (Stay Detection)
-            if last_lat is not None:
-                dist = haversine(last_lat, last_lon, loc['latitude'], loc['longitude'])
-                
-                if dist < cfg['jitter_radius_meters']:
-                    # Está parado
-                    if potential_stay_start is None:
-                        potential_stay_start = datetime.now()
-                        stay_lat = loc['latitude']
-                        stay_lon = loc['longitude']
-                        stay_point_count = 1
-                    else:
-                        stay_point_count += 1
-                        
-                    # Verifica se completou o tempo de permanência
-                    if datetime.now() - potential_stay_start >= timedelta(minutes=cfg['stay_duration_minutes']):
-                        # Ainda está parado, atualiza a saída mas não salva no BD ainda, 
-                        # só salva quando sair do raio.
-                        pass
-                else:
-                    # Movimentou-se
-                    if potential_stay_start and (datetime.now() - potential_stay_start) >= timedelta(minutes=cfg['stay_duration_minutes']):
-                        # Esteve parado o suficiente, salva a permanência
-                        dep_time = datetime.now()
-                        duration = (dep_time - potential_stay_start).total_seconds() / 60
-                        stay_id = insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
-                                    dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count)
-                        # Salva arquivo individual da permanência para fácil compartilhamento
-                        save_stay_file(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
-                                      dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count, stay_id)
-                        print(f"✅ Permanência registrada: {duration:.1f} min.")
-                    
-                    # Reseta a permanência
-                    potential_stay_start = None
-                    stay_point_count = 0
+        try:
+            loc = get_location()
 
-            last_lat = loc['latitude']
-            last_lon = loc['longitude']
-        else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Aguardando sinal GPS...")
-        
+            if loc:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Local: {loc['latitude']:.5f}, {loc['longitude']:.5f} (Acc: {loc['accuracy']:.0f}m)")
+                insert_point(loc['latitude'], loc['longitude'], loc['altitude'], loc['accuracy'], loc['speed'], loc['bearing'])
+
+                # Lógica de Permanência (Stay Detection)
+                if last_lat is not None:
+                    dist = haversine(last_lat, last_lon, loc['latitude'], loc['longitude'])
+
+                    if dist < cfg['jitter_radius_meters']:
+                        # Está parado
+                        if potential_stay_start is None:
+                            potential_stay_start = datetime.now()
+                            stay_lat = loc['latitude']
+                            stay_lon = loc['longitude']
+                            stay_point_count = 1
+                        else:
+                            stay_point_count += 1
+
+                        # Verifica se completou o tempo de permanência
+                        if datetime.now() - potential_stay_start >= timedelta(minutes=cfg['stay_duration_minutes']):
+                            # Ainda está parado, atualiza a saída mas não salva no BD ainda,
+                            # só salva quando sair do raio.
+                            pass
+                    else:
+                        # Movimentou-se
+                        if potential_stay_start and (datetime.now() - potential_stay_start) >= timedelta(minutes=cfg['stay_duration_minutes']):
+                            # Esteve parado o suficiente, salva a permanência
+                            dep_time = datetime.now()
+                            duration = (dep_time - potential_stay_start).total_seconds() / 60
+                            stay_id = insert_stay(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
+                                        dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count)
+                            # Salva arquivo individual da permanência para fácil compartilhamento
+                            save_stay_file(stay_lat, stay_lon, potential_stay_start.strftime('%Y-%m-%d %H:%M:%S'),
+                                          dep_time.strftime('%Y-%m-%d %H:%M:%S'), duration, stay_point_count, stay_id)
+                            print(f"✅ Permanência registrada: {duration:.1f} min.")
+
+                        # Reseta a permanência
+                        potential_stay_start = None
+                        stay_point_count = 0
+
+                last_lat = loc['latitude']
+                last_lon = loc['longitude']
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Aguardando sinal GPS...")
+        except Exception as e:
+            # Nunca deixa um erro inesperado derrubar o loop inteiro
+            logging.error(f"Erro no loop principal: {e}")
+            print(f"⚠️  Erro no ciclo, continuando: {e}")
+
         # ECONOMIA DE BATERIA: O sleep é respeitado rigorosamente
         time.sleep(cfg['interval_seconds'])
 
